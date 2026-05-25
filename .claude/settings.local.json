@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Head-Object -First 50)",
+      "WebFetch(domain:www.api-football.com)",
+      "WebSearch",
+      "WebFetch(domain:api-sports.io)",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue | ForEach-Object { Write-Host \"Matando PID $\\($_.Id\\)\"; $_ | Stop-Process -Force }; Start-Sleep -Seconds 4; Write-Host \"OK\")",
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue)"
+    ]
+  }
+}
