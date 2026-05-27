@@ -8,6 +8,7 @@ def _fmt_team_standing(entry: dict) -> dict:
     return {
         "pos": entry["rank"],
         "team": team["name"],
+        "team_id": team["id"],
         "pts": entry["points"],
         "played": all_stats["played"],
         "won": all_stats["win"],
@@ -17,6 +18,8 @@ def _fmt_team_standing(entry: dict) -> dict:
         "ga": all_stats["goals"]["against"],
         "gd": entry["goalsDiff"],
         "form": entry.get("form", ""),
+        "group": entry.get("group", ""),
+        "description": entry.get("description") or "",
     }
 
 
@@ -38,7 +41,9 @@ async def get_league_standings(league_name: str) -> list[dict] | dict:
     if not groups:
         return {"error": f"Classificação não disponível para {league_name} (temporada {season})."}
 
-    result = []
+    # Preserva grupos separados para ligas de copa (Libertadores, Sul-Am, Copa do Mundo)
+    result: list[dict] = []
     for group in groups:
-        result.extend([_fmt_team_standing(e) for e in group])
+        entries = [_fmt_team_standing(e) for e in group]
+        result.append({"group": entries[0]["group"], "teams": entries})
     return result

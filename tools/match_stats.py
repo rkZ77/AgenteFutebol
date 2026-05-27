@@ -2,6 +2,7 @@ from api.api_football import (
     get_fixture_statistics,
     get_fixture_events,
     get_fixture_by_id,
+    get_fixture_lineups,
     get_injuries,
     get_predictions,
     search_fixture,
@@ -68,6 +69,28 @@ async def get_match_injuries(fixture_id: int) -> list[dict]:
             "player": p["player"]["name"],
             "reason": p["player"]["reason"],
             "type": p["player"]["type"],
+        })
+    return result
+
+
+async def get_match_lineups(fixture_id: int) -> list[dict]:
+    raw = await get_fixture_lineups(fixture_id)
+    result = []
+    for team_data in raw:
+        pos_map = {"G": [], "D": [], "M": [], "F": []}
+        for entry in team_data.get("startXI", []):
+            p = entry["player"]
+            pos_map.get(p["pos"], pos_map["M"]).append(p["name"])
+        substitutes = [e["player"]["name"] for e in team_data.get("substitutes", [])]
+        result.append({
+            "team": team_data["team"]["name"],
+            "formation": team_data.get("formation", "?"),
+            "coach": team_data.get("coach", {}).get("name", "?"),
+            "gk": pos_map["G"],
+            "defenders": pos_map["D"],
+            "midfielders": pos_map["M"],
+            "forwards": pos_map["F"],
+            "substitutes": substitutes,
         })
     return result
 

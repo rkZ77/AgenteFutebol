@@ -2,15 +2,27 @@ import asyncio
 import logging
 import sys
 import httpx
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from bot.telegram_bot import build_application, set_bot_commands
 from config import TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, API_FOOTBALL_KEY
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    stream=sys.stdout,
+# Pasta de logs
+Path("logs").mkdir(exist_ok=True)
+
+_fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+# Arquivo rotativo — 5MB por arquivo, 7 arquivos de histórico
+_file_handler = RotatingFileHandler(
+    "logs/bot.log", maxBytes=5 * 1024 * 1024, backupCount=7, encoding="utf-8"
 )
+_file_handler.setFormatter(_fmt)
+
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.setFormatter(_fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _stream_handler])
 logger = logging.getLogger(__name__)
 
 

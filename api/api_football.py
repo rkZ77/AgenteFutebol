@@ -2,14 +2,31 @@ import httpx
 from typing import Any
 from config import API_FOOTBALL_BASE, API_FOOTBALL_HEADERS, API_TIMEZONE, season_for
 
+# Cliente compartilhado — reutiliza conexões TCP (evita overhead de handshake por request)
+_client: httpx.AsyncClient | None = None
+
+
+def get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=15.0,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _client
+
+
+# Endpoints que aceitam o parâmetro timezone
+_TZ_ENDPOINTS = {"fixtures", "fixtures/headtohead"}
+
 
 async def _get(endpoint: str, params: dict) -> dict[str, Any]:
-    params.setdefault("timezone", API_TIMEZONE)
+    if endpoint in _TZ_ENDPOINTS:
+        params.setdefault("timezone", API_TIMEZONE)
     url = f"{API_FOOTBALL_BASE}/{endpoint}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url, headers=API_FOOTBALL_HEADERS, params=params)
-        resp.raise_for_status()
-        return resp.json()
+    resp = await get_client().get(url, headers=API_FOOTBALL_HEADERS, params=params)
+    resp.raise_for_status()
+    return resp.json()
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -106,6 +123,21 @@ async def search_team(name: str) -> list[dict]:
     return data.get("response", [])
 
 
+async def get_fixture_lineups(fixture_id: int) -> list[dict]:
+    data = await _get("fixtures/lineups", {"fixture": fixture_id})
+    return data.get("response", [])
+
+
+async def get_team_season_statistics(team_id: int, league_id: int, season: int) -> dict | None:
+    data = await _get("teams/statistics", {
+        "team": team_id,
+        "league": league_id,
+        "season": season,
+    })
+    resp = data.get("response")
+    return resp if resp else None
+
+
 # ── Odds ──────────────────────────────────────────────────────────────────────
 
 async def get_fixture_odds(fixture_id: int) -> list[dict]:
@@ -114,25 +146,24 @@ async def get_fixture_odds(fixture_id: int) -> list[dict]:
 
 
 async def get_live_odds(fixture_id: int) -> dict:
-    """Retorna odds ao vivo com status detalhado (stopped=HT, blocked=suspenso, sem_mercados=sem cobertura)."""
+    """Retorna odds ao vivo. Campo correto é 'odds' (não 'bets') no response da API."""
     url = f"{API_FOOTBALL_BASE}/odds/live"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url, headers=API_FOOTBALL_HEADERS, params={"fixture": fixture_id})
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await get_client().get(url, headers=API_FOOTBALL_HEADERS, params={"fixture": fixture_id})
+    resp.raise_for_status()
+    data = resp.json()
     entries = data.get("response", [])
     if not entries:
-        return {"status": "sem_cobertura", "bets": []}
+        return {"status": "sem_cobertura", "odds": []}
     entry = entries[0]
     status = entry.get("status", {})
-    bets = entry.get("bets", [])
+    odds = entry.get("odds", [])  # campo correto é "odds", não "bets"
     if status.get("stopped"):
-        return {"status": "intervalo", "bets": bets}
+        return {"status": "intervalo", "odds": odds}
     if status.get("blocked"):
-        return {"status": "suspenso", "bets": bets}
-    if not bets:
-        return {"status": "sem_mercados", "bets": []}
-    return {"status": "ok", "bets": bets}
+        return {"status": "suspenso", "odds": odds}
+    if not odds:
+        return {"status": "sem_mercados", "odds": []}
+    return {"status": "ok", "odds": odds}
 
 
 # ── Injuries / Predictions ───────────────────────────────────────────────────

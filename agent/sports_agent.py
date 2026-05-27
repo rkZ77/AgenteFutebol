@@ -1,18 +1,21 @@
 import asyncio
+import logging
 from typing import Any
 import anthropic
 
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, MAX_TOKENS, MAX_HISTORY_MESSAGES
+
+logger = logging.getLogger(__name__)
 from agent.prompts import SYSTEM_PROMPT
 from tools.live_matches import get_live_matches, get_today_matches
-from tools.match_stats import get_match_full_stats, find_and_get_stats, get_match_injuries, get_match_prediction
+from tools.match_stats import get_match_full_stats, find_and_get_stats, get_match_injuries, get_match_prediction, get_match_lineups
 from tools.odds import get_prematch_odds, get_live_match_odds
 from tools.standings import get_league_standings
-from tools.head_to_head import get_h2h, get_team_recent_form
+from tools.head_to_head import get_h2h, get_team_recent_form, get_team_stats_season
 from tools.formatters import (
     fmt_live_matches, fmt_today_matches, fmt_match_stats,
     fmt_odds, fmt_live_odds, fmt_standings, fmt_h2h, fmt_team_form,
-    fmt_injuries, fmt_prediction,
+    fmt_injuries, fmt_prediction, fmt_team_season_stats, fmt_lineups,
 )
 
 
@@ -177,6 +180,30 @@ TOOLS: list[dict] = [
             "required": ["fixture_id"],
         },
     },
+    {
+        "name": "get_lineups",
+        "description": "Retorna as escalações confirmadas de uma partida: formação, titulares organizados por posição (GK/DEF/MED/ATA) e banco de reservas de cada time. Disponível a partir de ~1h antes do jogo.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fixture_id": {"type": "integer", "description": "ID único da partida."},
+            },
+            "required": ["fixture_id"],
+        },
+    },
+    {
+        "name": "get_team_season_stats",
+        "description": "Retorna estatísticas do time na temporada atual de uma liga específica: média de gols marcados/sofridos (casa e fora), clean sheets, jogos sem marcar, maior vitória/derrota e forma recente. Use no fluxo de análise para entender o padrão de gols do time na competição.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team_name": {"type": "string", "description": "Nome do time (ex: 'Flamengo', 'LDU')."},
+                "league_name": {"type": "string", "description": "Nome da liga (ex: 'libertadores', 'brasileirao_a', 'sul_americana')."},
+            },
+            "required": ["team_name", "league_name"],
+        },
+        "cache_control": {"type": "ephemeral"},  # cache tools até aqui (~5min TTL)
+    },
 ]
 
 
@@ -201,8 +228,12 @@ async def _execute_tool(tool_name: str, tool_input: dict) -> Any:
         return fmt_team_form(await get_team_recent_form(tool_input["team_name"], tool_input.get("last", 5)))
     elif tool_name == "get_injuries":
         return fmt_injuries(await get_match_injuries(tool_input["fixture_id"]))
+    elif tool_name == "get_lineups":
+        return fmt_lineups(await get_match_lineups(tool_input["fixture_id"]))
     elif tool_name == "get_prediction":
         return fmt_prediction(await get_match_prediction(tool_input["fixture_id"]))
+    elif tool_name == "get_team_season_stats":
+        return fmt_team_season_stats(await get_team_stats_season(tool_input["team_name"], tool_input["league_name"]))
     else:
         return f"Tool desconhecida: {tool_name}"
 
@@ -216,12 +247,25 @@ async def run_agent(user_message: str, history: list[dict]) -> tuple[str, list[d
             client.messages.create,
             model=CLAUDE_MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=[{
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},  # cache system prompt (~5min TTL)
+            }],
             tools=TOOLS,
             messages=messages,
         )
 
         messages.append({"role": "assistant", "content": response.content})
+
+        # Log uso de tokens + cache hits para monitoramento de custo
+        usage = response.usage
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        regular = getattr(usage, "input_tokens", 0) or 0
+        logger.debug(
+            f"[TOKENS] input={regular} cache_read={cache_read} cache_write={cache_create} output={usage.output_tokens}"
+        )
 
         if response.stop_reason == "end_turn":
             text = next(

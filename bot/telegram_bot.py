@@ -55,8 +55,10 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_live(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    logger.info(f"[CMD] /live — @{user.username or user.first_name} ({user.id})")
     await update.message.chat.send_action(ChatAction.TYPING)
-    user_id = update.effective_user.id
+    user_id = user.id
     history = _user_histories.get(user_id, [])
     response, new_history = await run_agent("Liste todas as partidas ao vivo agora.", history)
     _user_histories[user_id] = new_history
@@ -64,8 +66,10 @@ async def cmd_live(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_hoje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    logger.info(f"[CMD] /hoje — @{user.username or user.first_name} ({user.id})")
     await update.message.chat.send_action(ChatAction.TYPING)
-    user_id = update.effective_user.id
+    user_id = user.id
     history = _user_histories.get(user_id, [])
     response, new_history = await run_agent("Quais são os jogos de hoje?", history)
     _user_histories[user_id] = new_history
@@ -73,19 +77,26 @@ async def cmd_hoje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+    username = user.username or user.first_name or str(user_id)
     user_text = update.message.text.strip()
     if not user_text:
         return
 
+    logger.info(f"[MSG] @{username} ({user_id}): {user_text[:120]}")
     await update.message.chat.send_action(ChatAction.TYPING)
     history = _user_histories.get(user_id, [])
 
     try:
+        import time
+        t0 = time.monotonic()
         response, new_history = await run_agent(user_text, history)
+        elapsed = time.monotonic() - t0
         _user_histories[user_id] = new_history
+        logger.info(f"[RES] @{username} ({user_id}) — {elapsed:.1f}s — {len(response)} chars")
     except Exception as e:
-        logger.error(f"Erro user {user_id}: {e}", exc_info=True)
+        logger.error(f"[ERR] @{username} ({user_id}): {e}", exc_info=True)
         response = "Ocorreu um erro ao processar sua solicitacao. Tente novamente."
 
     await _send_long_message(update, response)

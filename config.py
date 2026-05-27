@@ -39,7 +39,7 @@ BRAZILIAN_LEAGUE_IDS = {71, 72, 73}
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 1500
-MAX_HISTORY_MESSAGES = 6
+MAX_HISTORY_MESSAGES = 2
 
 
 def season_for(league_id: int) -> int:

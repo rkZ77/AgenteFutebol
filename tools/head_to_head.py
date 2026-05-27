@@ -1,4 +1,5 @@
-from api.api_football import get_head_to_head, search_team, get_team_fixtures
+from api.api_football import get_head_to_head, search_team, get_team_fixtures, get_team_season_statistics
+from config import LEAGUES, season_for
 
 
 async def _resolve_team_id(name: str) -> int | None:
@@ -61,6 +62,62 @@ async def get_h2h(team1_name: str, team2_name: str, last: int = 8) -> dict:
             "total": len(past),
         },
         "matches": past,
+    }
+
+
+async def get_team_stats_season(team_name: str, league_name: str) -> dict:
+    """Estatísticas do time na temporada atual da liga especificada."""
+    teams = await search_team(team_name)
+    if not teams:
+        return {"error": f"Time '{team_name}' não encontrado."}
+    team_id = teams[0]["team"]["id"]
+    team_real_name = teams[0]["team"]["name"]
+
+    league_key = league_name.lower().replace(" ", "_").replace("ã", "a")
+    league_id = None
+    for key, lid in LEAGUES.items():
+        if league_key in key or key in league_key:
+            league_id = lid
+            break
+    if not league_id:
+        return {"error": f"Liga '{league_name}' não encontrada."}
+
+    season = season_for(league_id)
+    data = await get_team_season_statistics(team_id, league_id, season)
+    if not data:
+        return {"error": f"Sem estatísticas de temporada para {team_real_name} em {league_name}."}
+
+    fixtures = data.get("fixtures", {})
+    goals = data.get("goals", {})
+    avg_goals_for = goals.get("for", {}).get("average", {})
+    avg_goals_against = goals.get("against", {}).get("average", {})
+    biggest = data.get("biggest", {})
+    clean_sheet = data.get("clean_sheet", {})
+    failed_to_score = data.get("failed_to_score", {})
+
+    return {
+        "team": team_real_name,
+        "league": league_name,
+        "season": season,
+        "played": fixtures.get("played", {}).get("total", 0),
+        "wins": fixtures.get("wins", {}).get("total", 0),
+        "draws": fixtures.get("draws", {}).get("total", 0),
+        "losses": fixtures.get("loses", {}).get("total", 0),
+        "avg_goals_for": {
+            "home": avg_goals_for.get("home", "0"),
+            "away": avg_goals_for.get("away", "0"),
+            "total": avg_goals_for.get("total", "0"),
+        },
+        "avg_goals_against": {
+            "home": avg_goals_against.get("home", "0"),
+            "away": avg_goals_against.get("away", "0"),
+            "total": avg_goals_against.get("total", "0"),
+        },
+        "clean_sheets": clean_sheet.get("total", 0),
+        "failed_to_score": failed_to_score.get("total", 0),
+        "biggest_win": biggest.get("wins", {}).get("total", ""),
+        "biggest_loss": biggest.get("loses", {}).get("total", ""),
+        "form": data.get("form", ""),
     }
 
 
