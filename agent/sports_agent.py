@@ -238,6 +238,31 @@ async def _execute_tool(tool_name: str, tool_input: dict) -> Any:
         return f"Tool desconhecida: {tool_name}"
 
 
+def _clean_history(messages: list[dict]) -> list[dict]:
+    """Mantém só pares texto user/assistant — descarta tool_use e tool_result."""
+    result = []
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, str) and content:
+            result.append(msg)
+            continue
+        if not isinstance(content, list):
+            continue
+        # Descarta mensagens que são só tool_results
+        if content and isinstance(content[0], dict) and content[0].get("type") == "tool_result":
+            continue
+        # Extrai só blocos de texto de mensagens do assistant
+        text_blocks = []
+        for block in content:
+            if hasattr(block, "type") and block.type == "text":
+                text_blocks.append({"type": "text", "text": block.text})
+            elif isinstance(block, dict) and block.get("type") == "text":
+                text_blocks.append(block)
+        if text_blocks:
+            result.append({"role": msg["role"], "content": text_blocks})
+    return result
+
+
 async def run_agent(user_message: str, history: list[dict]) -> tuple[str, list[dict]]:
     history = history[-MAX_HISTORY_MESSAGES:]
     messages = history + [{"role": "user", "content": user_message}]
@@ -250,7 +275,7 @@ async def run_agent(user_message: str, history: list[dict]) -> tuple[str, list[d
             system=[{
                 "type": "text",
                 "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},  # cache system prompt (~5min TTL)
+                "cache_control": {"type": "ephemeral"},
             }],
             tools=TOOLS,
             messages=messages,
@@ -258,13 +283,11 @@ async def run_agent(user_message: str, history: list[dict]) -> tuple[str, list[d
 
         messages.append({"role": "assistant", "content": response.content})
 
-        # Log uso de tokens + cache hits para monitoramento de custo
         usage = response.usage
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        regular = getattr(usage, "input_tokens", 0) or 0
         logger.debug(
-            f"[TOKENS] input={regular} cache_read={cache_read} cache_write={cache_create} output={usage.output_tokens}"
+            f"[TOKENS] input={usage.input_tokens} cache_read={cache_read} cache_write={cache_create} output={usage.output_tokens}"
         )
 
         if response.stop_reason == "end_turn":
@@ -272,7 +295,8 @@ async def run_agent(user_message: str, history: list[dict]) -> tuple[str, list[d
                 (block.text for block in response.content if hasattr(block, "text")),
                 "Sem resposta.",
             )
-            updated_history = messages[-MAX_HISTORY_MESSAGES:]
+            # Salva só pares texto limpos — nunca tool_use/tool_result orphans
+            updated_history = _clean_history(messages)[-MAX_HISTORY_MESSAGES:]
             return text, updated_history
 
         if response.stop_reason == "tool_use":
