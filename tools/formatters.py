@@ -2,6 +2,7 @@
 Converte dados brutos das tools em strings compactas antes de enviar ao Claude.
 Reduz ~70-80% dos tokens comparado ao JSON completo.
 """
+from config import ODDS_MIN, ODDS_MAX
 
 
 def fmt_live_matches(matches: list[dict]) -> str:
@@ -91,11 +92,51 @@ def _fmt_markets(markets: dict) -> list[str]:
     return lines
 
 
+ODDS_BINGO_MAX = 3.00
+
+
+def _eligible_entries(markets: dict, min_odd: float = ODDS_MIN, max_odd: float = ODDS_MAX) -> list[str]:
+    """Retorna outcomes dentro do range min_odd–max_odd."""
+    entries = []
+    for market, outcomes in markets.items():
+        for outcome, val in outcomes.items():
+            odd_str = val["odd"] if isinstance(val, dict) else val
+            try:
+                odd = float(odd_str)
+            except (ValueError, TypeError):
+                continue
+            if min_odd <= odd <= max_odd:
+                bookmaker = val.get("bookmaker", "") if isinstance(val, dict) else ""
+                bm_str = f" ({bookmaker})" if bookmaker else ""
+                entries.append(f"{market} — {outcome}: {odd}{bm_str}")
+    return entries
+
+
+def _append_eligible_sections(result: str, markets: dict) -> str:
+    """Adiciona seções ELEGÍVEIS (análise) e BINGO (range estendido) ao output de odds."""
+    eligible = _eligible_entries(markets)
+    bingo = _eligible_entries(markets, max_odd=ODDS_BINGO_MAX)
+
+    if eligible:
+        result += f"\n\nELEGÍVEIS ANÁLISE ({ODDS_MIN}–{ODDS_MAX}):\n" + "\n".join(eligible)
+    else:
+        result += f"\n\nELEGÍVEIS ANÁLISE ({ODDS_MIN}–{ODDS_MAX}): nenhuma odd neste range — não sugira entradas."
+
+    # Só mostra bingo se tiver entradas além do range de análise
+    bingo_extra = [e for e in bingo if e not in eligible]
+    if bingo_extra:
+        result += f"\n\nELEGÍVEIS BINGO ({ODDS_MIN}–{ODDS_BINGO_MAX}):\n" + "\n".join(bingo)
+
+    return result
+
+
 def fmt_odds(data: dict) -> str:
     if data.get("error") == "sem_cobertura":
         return "Sem cobertura de odds para esta partida."
     if data.get("status") == "ok" and data.get("markets"):
-        return "\n".join(_fmt_markets(data["markets"]))
+        markets = data["markets"]
+        result = "\n".join(_fmt_markets(markets))
+        return _append_eligible_sections(result, markets)
     return "Odds pré-jogo não disponíveis."
 
 
@@ -105,7 +146,7 @@ def fmt_live_odds(data: dict) -> str:
     lines = _fmt_markets(markets)
 
     headers = {
-        "live":             "",
+        "live":               "",
         "intervalo_sem_odds": "[INTERVALO] Bookmakers pausaram as odds ao vivo. Retornam no 2º tempo.",
         "suspenso_sem_odds":  "[MERCADO SUSPENSO] Odds ao vivo suspensas temporariamente.",
         "sem_cobertura":      "Sem cobertura de odds ao vivo para esta partida.",
@@ -114,7 +155,9 @@ def fmt_live_odds(data: dict) -> str:
     header = headers.get(status, "")
     if not lines:
         return header or "Sem odds disponíveis."
-    return header + "\n".join(lines)
+
+    result = header + "\n".join(lines)
+    return _append_eligible_sections(result, markets)
 
 
 def _fmt_group_table(teams: list[dict]) -> str:
@@ -230,6 +273,63 @@ def fmt_lineups(data: list[dict]) -> str:
         ]
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
+
+
+def fmt_player_stats(data: list[dict]) -> str:
+    if not data:
+        return "Stats de jogadores não disponíveis para esta partida."
+    parts = []
+    for team_data in data:
+        lines = [f"{team_data['team']}:"]
+        lines.append(f"  {'Nome':<22} {'Pos':>3} {'Min':>3} {'Rat':>4} {'G':>2} {'A':>2} {'Chut':>4} {'PsCh':>4} {'Des':>3} {'Cart'}")
+        for p in team_data["players"]:
+            rating = p["rating"] or "-"
+            cap = "© " if p["captain"] else "  "
+            cards = ""
+            if p["yellow"]: cards += "🟨"
+            if p["red"]:    cards += "🟥"
+            lines.append(
+                f"  {cap}{p['name']:<20} {p['pos']:>3} {p['minutes']:>3} {str(rating):>4} "
+                f"{p['goals']:>2} {p['assists']:>2} {p['shots']:>4} {p['key_passes']:>4} "
+                f"{p['tackles']:>3} {cards}"
+            )
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def fmt_team_historical_stats(data: dict) -> str:
+    if "error" in data:
+        return data["error"]
+    venue_label = {"home": "em casa", "away": "fora", "all": "geral"}.get(data.get("venue", "all"), "geral")
+    t  = data.get("total", {})
+    h1 = data.get("first_half", {})
+    h2 = data.get("second_half", {})
+
+    def r(d: dict, k: str) -> str:
+        return str(d.get(k, "?"))
+
+    lines = [
+        f"Stats reais {data['team']} | {data['league']} {data['season']} | {venue_label} | {data['games_analyzed']} jogos",
+        f"{'':20} Total   1ºT   2ºT",
+        f"{'Escanteios':<20} {r(t,'corners'):>5} {r(h1,'corners'):>5} {r(h2,'corners'):>5}",
+        f"{'Chutes total':<20} {r(t,'shots'):>5} {r(h1,'shots'):>5} {r(h2,'shots'):>5}",
+        f"{'Chutes a gol':<20} {r(t,'shots_on'):>5} {r(h1,'shots_on'):>5} {r(h2,'shots_on'):>5}",
+        f"{'Chutes fora':<20} {r(t,'shots_off'):>5} {r(h1,'shots_off'):>5} {r(h2,'shots_off'):>5}",
+        f"{'Chutes bloq.':<20} {r(t,'shots_blocked'):>5} {r(h1,'shots_blocked'):>5} {r(h2,'shots_blocked'):>5}",
+        f"{'Chutes (dentro)':<20} {r(t,'shots_inside'):>5} {r(h1,'shots_inside'):>5} {r(h2,'shots_inside'):>5}",
+        f"{'Chutes (fora)':<20} {r(t,'shots_outside'):>5} {r(h1,'shots_outside'):>5} {r(h2,'shots_outside'):>5}",
+        f"{'Posse (%)':<20} {r(t,'possession'):>5} {r(h1,'possession'):>5} {r(h2,'possession'):>5}",
+        f"{'Amarelos':<20} {r(t,'yellow_cards'):>5} {r(h1,'yellow_cards'):>5} {r(h2,'yellow_cards'):>5}",
+        f"{'Vermelhos':<20} {r(t,'red_cards'):>5} {r(h1,'red_cards'):>5} {r(h2,'red_cards'):>5}",
+        f"{'Faltas':<20} {r(t,'fouls'):>5} {r(h1,'fouls'):>5} {r(h2,'fouls'):>5}",
+        f"{'Impedimentos':<20} {r(t,'offsides'):>5} {r(h1,'offsides'):>5} {r(h2,'offsides'):>5}",
+        f"{'Defesas GK':<20} {r(t,'saves'):>5} {r(h1,'saves'):>5} {r(h2,'saves'):>5}",
+        f"{'Passes':<20} {r(t,'passes'):>5} {r(h1,'passes'):>5} {r(h2,'passes'):>5}",
+        f"{'Passes (%)':<20} {r(t,'passes_pct'):>5} {r(h1,'passes_pct'):>5} {r(h2,'passes_pct'):>5}",
+        f"{'xG':<20} {r(t,'xg'):>5} {r(h1,'xg'):>5} {r(h2,'xg'):>5}",
+        f"Gols marcados: {data['avg_goals_scored']}/jogo  Sofridos: {data['avg_goals_conceded']}/jogo",
+    ]
+    return "\n".join(lines)
 
 
 def fmt_team_season_stats(data: dict) -> str:

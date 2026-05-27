@@ -41,6 +41,9 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 2000
 MAX_HISTORY_MESSAGES = 2
 
+ODDS_MIN = 1.40
+ODDS_MAX = 2.20
+
 
 def season_for(league_id: int) -> int:
     return LEAGUE_SEASONS.get(league_id, 2026)

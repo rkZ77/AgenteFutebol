@@ -8,14 +8,15 @@ from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, MAX_TOKENS, MAX_HISTORY_MESS
 logger = logging.getLogger(__name__)
 from agent.prompts import SYSTEM_PROMPT
 from tools.live_matches import get_live_matches, get_today_matches
-from tools.match_stats import get_match_full_stats, find_and_get_stats, get_match_injuries, get_match_prediction, get_match_lineups
+from tools.match_stats import get_match_full_stats, find_and_get_stats, get_match_injuries, get_match_prediction, get_match_lineups, get_match_player_stats
 from tools.odds import get_prematch_odds, get_live_match_odds
 from tools.standings import get_league_standings
-from tools.head_to_head import get_h2h, get_team_recent_form, get_team_stats_season
+from tools.head_to_head import get_h2h, get_team_recent_form, get_team_stats_season, get_team_historical_stats
 from tools.formatters import (
     fmt_live_matches, fmt_today_matches, fmt_match_stats,
     fmt_odds, fmt_live_odds, fmt_standings, fmt_h2h, fmt_team_form,
     fmt_injuries, fmt_prediction, fmt_team_season_stats, fmt_lineups,
+    fmt_team_historical_stats, fmt_player_stats,
 )
 
 
@@ -202,7 +203,32 @@ TOOLS: list[dict] = [
             },
             "required": ["team_name", "league_name"],
         },
-        "cache_control": {"type": "ephemeral"},  # cache tools até aqui (~5min TTL)
+    },
+    {
+        "name": "get_team_historical_stats",
+        "description": "Busca stats reais dos últimos N jogos finalizados do time na liga: média de escanteios, chutes, posse, gols marcados/sofridos, cartões e faltas. Use para responder perguntas sobre padrões históricos (ex: 'Corinthians costuma fazer muitos escanteios em casa?').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "team_name": {"type": "string", "description": "Nome do time."},
+                "league_name": {"type": "string", "description": "Nome da liga (ex: 'libertadores', 'brasileirao_a')."},
+                "last": {"type": "integer", "description": "Quantidade de jogos a analisar. Default: 8."},
+                "venue": {"type": "string", "enum": ["home", "away", "all"], "description": "Filtrar por casa ('home'), fora ('away') ou todos ('all'). Default: 'all'."},
+            },
+            "required": ["team_name", "league_name"],
+        },
+    },
+    {
+        "name": "get_player_stats",
+        "description": "Retorna stats individuais de todos os jogadores de uma partida: rating, gols, assistências, chutes, passes-chave, desarmes, dribles e cartões. Útil para identificar quem está em melhor forma, quem dominou o jogo e embasar mercados de artilheiro.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fixture_id": {"type": "integer", "description": "ID único da partida."},
+            },
+            "required": ["fixture_id"],
+        },
+        "cache_control": {"type": "ephemeral"},
     },
 ]
 
@@ -234,6 +260,15 @@ async def _execute_tool(tool_name: str, tool_input: dict) -> Any:
         return fmt_prediction(await get_match_prediction(tool_input["fixture_id"]))
     elif tool_name == "get_team_season_stats":
         return fmt_team_season_stats(await get_team_stats_season(tool_input["team_name"], tool_input["league_name"]))
+    elif tool_name == "get_player_stats":
+        return fmt_player_stats(await get_match_player_stats(tool_input["fixture_id"]))
+    elif tool_name == "get_team_historical_stats":
+        return fmt_team_historical_stats(await get_team_historical_stats(
+            tool_input["team_name"],
+            tool_input["league_name"],
+            tool_input.get("last", 8),
+            tool_input.get("venue", "all"),
+        ))
     else:
         return f"Tool desconhecida: {tool_name}"
 

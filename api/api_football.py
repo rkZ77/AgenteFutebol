@@ -77,6 +77,12 @@ async def get_fixture_statistics(fixture_id: int) -> list[dict]:
     return data.get("response", [])
 
 
+async def get_fixture_statistics_half(fixture_id: int) -> list[dict]:
+    """Retorna stats com breakdown por 1º e 2º tempo (statistics_1h / statistics_2h)."""
+    data = await _get("fixtures/statistics", {"fixture": fixture_id, "half": "true"})
+    return data.get("response", [])
+
+
 async def get_fixture_events(fixture_id: int) -> list[dict]:
     data = await _get("fixtures/events", {"fixture": fixture_id})
     return data.get("response", [])
@@ -118,6 +124,11 @@ async def get_team_fixtures(team_id: int, last: int = 5) -> list[dict]:
     return data.get("response", [])
 
 
+async def get_team_fixtures_by_league(team_id: int, league_id: int, season: int, last: int = 10) -> list[dict]:
+    data = await _get("fixtures", {"team": team_id, "league": league_id, "season": season, "last": last})
+    return data.get("response", [])
+
+
 async def search_team(name: str) -> list[dict]:
     data = await _get("teams", {"search": name})
     return data.get("response", [])
@@ -125,6 +136,11 @@ async def search_team(name: str) -> list[dict]:
 
 async def get_fixture_lineups(fixture_id: int) -> list[dict]:
     data = await _get("fixtures/lineups", {"fixture": fixture_id})
+    return data.get("response", [])
+
+
+async def get_fixture_players(fixture_id: int) -> list[dict]:
+    data = await _get("fixtures/players", {"fixture": fixture_id})
     return data.get("response", [])
 
 
@@ -157,6 +173,8 @@ async def get_live_odds(fixture_id: int) -> dict:
     entry = entries[0]
     status = entry.get("status", {})
     odds = entry.get("odds", [])  # campo correto é "odds", não "bets"
+    if status.get("finished"):
+        return {"status": "finished", "odds": []}   # não iniciado ou já finalizado
     if status.get("stopped"):
         return {"status": "intervalo", "odds": odds}
     if status.get("blocked"):

@@ -3,6 +3,7 @@ from api.api_football import (
     get_fixture_events,
     get_fixture_by_id,
     get_fixture_lineups,
+    get_fixture_players,
     get_injuries,
     get_predictions,
     search_fixture,
@@ -92,6 +93,58 @@ async def get_match_lineups(fixture_id: int) -> list[dict]:
             "forwards": pos_map["F"],
             "substitutes": substitutes,
         })
+    return result
+
+
+async def get_match_player_stats(fixture_id: int) -> list[dict]:
+    """Stats individuais de cada jogador na partida: rating, gols, assistências, chutes, passes-chave, dribles, desarmes."""
+    raw = await get_fixture_players(fixture_id)
+    result = []
+    for team_data in raw:
+        team_name = team_data["team"]["name"]
+        players = []
+        for entry in team_data.get("players", []):
+            p = entry["player"]
+            s = entry["statistics"][0] if entry.get("statistics") else {}
+            games    = s.get("games", {})
+            shots    = s.get("shots", {})
+            goals    = s.get("goals", {})
+            passes   = s.get("passes", {})
+            tackles  = s.get("tackles", {})
+            duels    = s.get("duels", {})
+            dribbles = s.get("dribbles", {})
+            fouls    = s.get("fouls", {})
+            cards    = s.get("cards", {})
+
+            minutes = games.get("minutes") or 0
+            if minutes == 0:
+                continue  # não jogou
+
+            players.append({
+                "name":        p["name"],
+                "pos":         games.get("position", "?"),
+                "minutes":     minutes,
+                "rating":      games.get("rating"),
+                "captain":     games.get("captain", False),
+                "goals":       goals.get("total") or 0,
+                "assists":     goals.get("assists") or 0,
+                "shots":       shots.get("total") or 0,
+                "shots_on":    shots.get("on") or 0,
+                "key_passes":  passes.get("key") or 0,
+                "pass_acc":    passes.get("accuracy"),
+                "tackles":     tackles.get("total") or 0,
+                "interceptions": tackles.get("interceptions") or 0,
+                "duels_won":   duels.get("won") or 0,
+                "dribbles":    dribbles.get("success") or 0,
+                "fouls_drawn": fouls.get("drawn") or 0,
+                "fouls_committed": fouls.get("committed") or 0,
+                "yellow":      cards.get("yellow") or 0,
+                "red":         cards.get("red") or 0,
+            })
+
+        # ordena por rating desc, depois minutos
+        players.sort(key=lambda x: (float(x["rating"] or 0), x["minutes"]), reverse=True)
+        result.append({"team": team_name, "players": players})
     return result
 
 

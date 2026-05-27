@@ -6,7 +6,9 @@
       "WebSearch",
       "WebFetch(domain:api-sports.io)",
       "PowerShell(Get-Process python -ErrorAction SilentlyContinue | ForEach-Object { Write-Host \"Matando PID $\\($_.Id\\)\"; $_ | Stop-Process -Force }; Start-Sleep -Seconds 4; Write-Host \"OK\")",
-      "PowerShell(Get-Process python -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Process python -ErrorAction SilentlyContinue)",
+      "WebFetch(domain:api-football-v1.p.rapidapi.com)",
+      "WebFetch(domain:web.archive.org)"
     ]
   }
 }

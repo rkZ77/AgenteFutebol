@@ -123,6 +123,12 @@ async def get_prematch_odds(fixture_id: int) -> dict:
     return {"status": "ok", "markets": ordered}
 
 
+def _filter_main_values(values: list[dict]) -> list[dict]:
+    """Se algum valor tiver main=True, retorna só esses. Senão retorna todos."""
+    main_vals = [v for v in values if v.get("main") is True]
+    return main_vals if main_vals else values
+
+
 def _parse_live_outcome(v: dict) -> tuple[str, str] | None:
     """Combina value + handicap em chave legível. Descarta outcomes suspensos."""
     if v.get("suspended"):
@@ -146,7 +152,9 @@ async def get_live_match_odds(fixture_id: int) -> dict:
                 continue
             name = market["name"]
             outcomes: dict[str, str] = {}
-            for v in market.get("values", []):
+            # Filtra por main=True quando há duplicatas no mesmo mercado
+            values = _filter_main_values(market.get("values", []))
+            for v in values:
                 parsed = _parse_live_outcome(v)
                 if parsed:
                     outcome_key, odd_val = parsed
@@ -159,6 +167,7 @@ async def get_live_match_odds(fixture_id: int) -> dict:
     msgs = {
         "intervalo":     "intervalo_sem_odds",
         "suspenso":      "suspenso_sem_odds",
+        "finished":      "sem_cobertura",  # jogo não iniciado ou já finalizado
         "sem_mercados":  "sem_cobertura",
         "sem_cobertura": "sem_cobertura",
     }

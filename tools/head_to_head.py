@@ -1,4 +1,9 @@
-from api.api_football import get_head_to_head, search_team, get_team_fixtures, get_team_season_statistics
+import asyncio
+from api.api_football import (
+    get_head_to_head, search_team, get_team_fixtures,
+    get_team_season_statistics, get_team_fixtures_by_league,
+    get_fixture_statistics, get_fixture_statistics_half,
+)
 from config import LEAGUES, season_for
 
 
@@ -118,6 +123,147 @@ async def get_team_stats_season(team_name: str, league_name: str) -> dict:
         "biggest_win": biggest.get("wins", {}).get("total", ""),
         "biggest_loss": biggest.get("loses", {}).get("total", ""),
         "form": data.get("form", ""),
+    }
+
+
+def _extract_stat(statistics: list[dict], name: str) -> float:
+    for s in statistics:
+        if s["type"] == name:
+            val = s["value"]
+            if val is None:
+                return 0.0
+            if isinstance(val, str):
+                try:
+                    return float(val.replace("%", ""))
+                except ValueError:
+                    return 0.0
+            return float(val)
+    return 0.0
+
+
+async def get_team_historical_stats(team_name: str, league_name: str, last: int = 8, venue: str = "all") -> dict:
+    """Agrega stats reais dos últimos N jogos finalizados do time na liga: escanteios, chutes, posse, gols, cartões."""
+    teams = await search_team(team_name)
+    if not teams:
+        return {"error": f"Time '{team_name}' não encontrado."}
+    team_id = teams[0]["team"]["id"]
+    team_real_name = teams[0]["team"]["name"]
+
+    league_key = league_name.lower().replace(" ", "_").replace("ã", "a")
+    league_id = None
+    for key, lid in LEAGUES.items():
+        if league_key in key or key in league_key:
+            league_id = lid
+            break
+    if not league_id:
+        return {"error": f"Liga '{league_name}' não encontrada."}
+
+    season = season_for(league_id)
+    fixtures = await get_team_fixtures_by_league(team_id, league_id, season, last=last * 2)
+
+    # Filtra só jogos finalizados
+    finished = [
+        f for f in fixtures
+        if f["fixture"]["status"]["short"] in ("FT", "AET", "PEN")
+    ]
+
+    # Filtra por venue
+    if venue == "home":
+        finished = [f for f in finished if f["teams"]["home"]["id"] == team_id]
+    elif venue == "away":
+        finished = [f for f in finished if f["teams"]["away"]["id"] == team_id]
+
+    if not finished:
+        return {"error": f"Sem jogos finalizados para {team_real_name} em {league_name} ({venue})."}
+
+    finished = finished[-last:]
+
+    # Busca stats com breakdown de 1h/2h em paralelo
+    all_stats = await asyncio.gather(
+        *[get_fixture_statistics_half(f["fixture"]["id"]) for f in finished],
+        return_exceptions=True,
+    )
+
+    def _new_totals() -> dict:
+        return {
+            "corners": 0.0, "shots": 0.0, "shots_on": 0.0, "shots_off": 0.0,
+            "shots_blocked": 0.0, "shots_inside": 0.0, "shots_outside": 0.0,
+            "possession": 0.0, "yellow_cards": 0.0, "red_cards": 0.0,
+            "fouls": 0.0, "offsides": 0.0, "saves": 0.0,
+            "passes": 0.0, "passes_pct": 0.0, "xg": 0.0,
+        }
+
+    totals = _new_totals()
+    totals_1h = _new_totals()
+    totals_2h = _new_totals()
+    goals_scored = 0.0
+    goals_conceded = 0.0
+    count = 0
+
+    for f, stats in zip(finished, all_stats):
+        if isinstance(stats, Exception) or not stats or len(stats) < 2:
+            continue
+        team_entry = next((s for s in stats if s["team"]["id"] == team_id), None)
+        if not team_entry:
+            continue
+
+        ts     = team_entry.get("statistics", [])
+        ts_1h  = team_entry.get("statistics_1h", [])
+        ts_2h  = team_entry.get("statistics_2h", [])
+
+        for key, src in [
+            ("corners",       "Corner Kicks"),
+            ("shots",         "Total Shots"),
+            ("shots_on",      "Shots on Goal"),
+            ("shots_off",     "Shots off Goal"),
+            ("shots_blocked", "Blocked Shots"),
+            ("shots_inside",  "Shots insidebox"),
+            ("shots_outside", "Shots outsidebox"),
+            ("possession",    "Ball Possession"),
+            ("yellow_cards",  "Yellow Cards"),
+            ("red_cards",     "Red Cards"),
+            ("fouls",         "Fouls"),
+            ("offsides",      "Offsides"),
+            ("saves",         "Goalkeeper Saves"),
+            ("passes",        "Total passes"),
+            ("passes_pct",    "Passes %"),
+            ("xg",            "expected_goals"),
+        ]:
+            totals[key]    += _extract_stat(ts, src)
+            totals_1h[key] += _extract_stat(ts_1h, src)
+            totals_2h[key] += _extract_stat(ts_2h, src)
+
+        is_home = f["teams"]["home"]["id"] == team_id
+        goals = f["goals"]
+        if is_home:
+            goals_scored    += goals["home"] or 0
+            goals_conceded  += goals["away"] or 0
+        else:
+            goals_scored    += goals["away"] or 0
+            goals_conceded  += goals["home"] or 0
+
+        count += 1
+
+    if count == 0:
+        return {"error": f"Sem dados de estatísticas disponíveis para {team_real_name} em {league_name}."}
+
+    def avg(v: float) -> str:
+        return f"{v / count:.1f}"
+
+    def avg_half(d: dict) -> dict:
+        return {k: avg(v) for k, v in d.items()}
+
+    return {
+        "team": team_real_name,
+        "league": league_name,
+        "season": season,
+        "games_analyzed": count,
+        "venue": venue,
+        "avg_goals_scored": avg(goals_scored),
+        "avg_goals_conceded": avg(goals_conceded),
+        "total": avg_half(totals),
+        "first_half": avg_half(totals_1h),
+        "second_half": avg_half(totals_2h),
     }
 
 
