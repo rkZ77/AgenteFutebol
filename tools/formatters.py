@@ -332,6 +332,33 @@ def fmt_team_historical_stats(data: dict) -> str:
     return "\n".join(lines)
 
 
+def fmt_team_historical_stats_any(data: dict) -> str:
+    if "error" in data:
+        return data["error"]
+    venue_label = {"home": "em casa", "away": "fora", "all": "geral"}.get(data.get("venue", "all"), "geral")
+    t  = data.get("total", {})
+    h1 = data.get("first_half", {})
+    h2 = data.get("second_half", {})
+    leagues = ", ".join(data.get("leagues_seen", [])) or "?"
+
+    def r(d: dict, k: str) -> str:
+        return str(d.get(k, "?"))
+
+    lines = [
+        f"Stats reais {data['team']} | qualquer competição ({leagues}) | {venue_label} | {data['games_analyzed']} jogos",
+        f"⚠️ Dados de múltiplas competições — use como referência de comportamento, não como stat específica da liga do jogo.",
+        f"{'':20} Total   1ºT   2ºT",
+        f"{'Escanteios':<20} {r(t,'corners'):>5} {r(h1,'corners'):>5} {r(h2,'corners'):>5}",
+        f"{'Chutes total':<20} {r(t,'shots'):>5} {r(h1,'shots'):>5} {r(h2,'shots'):>5}",
+        f"{'Chutes a gol':<20} {r(t,'shots_on'):>5} {r(h1,'shots_on'):>5} {r(h2,'shots_on'):>5}",
+        f"{'Posse (%)':<20} {r(t,'possession'):>5} {r(h1,'possession'):>5} {r(h2,'possession'):>5}",
+        f"{'Amarelos':<20} {r(t,'yellow_cards'):>5} {r(h1,'yellow_cards'):>5} {r(h2,'yellow_cards'):>5}",
+        f"{'Faltas':<20} {r(t,'fouls'):>5} {r(h1,'fouls'):>5} {r(h2,'fouls'):>5}",
+        f"Gols marcados: {data['avg_goals_scored']}/jogo  Sofridos: {data['avg_goals_conceded']}/jogo",
+    ]
+    return "\n".join(lines)
+
+
 def fmt_team_season_stats(data: dict) -> str:
     if "error" in data:
         return data["error"]
